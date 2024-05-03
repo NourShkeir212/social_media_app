@@ -1,0 +1,502 @@
+import 'dart:async';
+import 'dart:io';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:flutter/material.dart';
+import 'package:internet_connection_checker/internet_connection_checker.dart';
+import 'package:socialapp2/layout/cubit/states.dart';
+import 'package:socialapp2/model/comment_model.dart';
+import '../../model/post_model.dart';
+import '../../model/user_model.dart';
+import '../../modules/chats/chats_screen.dart';
+import '../../modules/feeds/feeds_screen.dart';
+import '../../modules/new_post/new_post_screen.dart';
+import '../../modules/settings/settings_screen.dart';
+import '../../modules/users/users_screen.dart';
+import '../../shared/const/consts.dart';
+import '../../shared/styles/icon_broken.dart';
+import 'package:firebase_storage/firebase_storage.dart' as firebase_storage;
+class SocialCubit extends Cubit<SocialStates>{
+
+  SocialCubit(): super(SocialInitialState());
+
+  static SocialCubit get(context) => BlocProvider.of(context);
+
+  SocialUserModel userModel;
+
+//----------------------------getUserData---------------------------------//
+  void getUserData()
+  {
+    emit(SocialGetUserLoadingState());
+
+   print('loading');
+    FirebaseFirestore.instance
+        .collection('users')
+        .doc(uId)
+        .get()
+        .then((value)
+    {
+      userModel=SocialUserModel.fromJson(value.data());
+    emit(SocialGetUserSuccessState());
+    }).catchError((error){
+      emit(SocialGetUserErrorState(error.toString()));
+      print(error.toString());
+    });
+  }
+
+//----------------------------forUi---------------------------------//
+
+  List<String> titles = [
+    'Home',
+    'Chats',
+    'Post',
+    'Users',
+    'Settings',
+  ];
+
+  List<Widget> screens = [
+    const FeedsScreen(),
+    const ChatsScreen(),
+    NewPostScreen(),
+    const UsersScreen(),
+    const SettingsScreen(),
+  ];
+   List<BottomNavigationBarItem> bottomItems=[
+     const BottomNavigationBarItem(
+       icon: Icon(
+         IconBroken.Home,
+       ),
+       label: 'Home',
+     ),
+     const BottomNavigationBarItem(
+       icon: Icon(
+         IconBroken.Chat,
+       ),
+       label: 'Chats',
+     ),
+     const BottomNavigationBarItem(
+       icon: Icon(
+         IconBroken.Paper_Upload,
+       ),
+       label: 'Post',
+     ),
+     const BottomNavigationBarItem(
+       icon: Icon(
+         IconBroken.Location,
+       ),
+       label: 'Users',
+     ),
+     const BottomNavigationBarItem(
+       icon: Icon(
+         IconBroken.Profile,
+       ),
+       label: 'My Profile',
+     ),
+   ];
+   int currentIndex = 0;
+  void changeBottomNav(int index){
+     if(index ==0) {
+       getPosts();
+     }
+    if(index ==2)
+      emit(SocialNewPostState());
+     else{
+      currentIndex = index;
+      emit(SocialChangeBottomNavState());
+     }
+
+  }
+
+
+//----------------------------ForImage---------------------------------//
+  File profileImage;
+  final picker =ImagePicker();
+
+  Future<void> getProfileImage() async
+  {
+    final pickedFile =await picker.getImage(
+        source: ImageSource.gallery
+    );
+
+    if(pickedFile !=null)
+    {
+      profileImage =File(pickedFile.path);
+      emit(SocialProfileImagePickedSuccessState());
+    }else{
+      emit(SocialProfileImagePickedErrorState());
+    }
+  }
+
+  File coverImage;
+
+  Future<void> getCoverImage() async
+  {
+    final pickedFile =await picker.getImage(
+        source: ImageSource.gallery
+    );
+
+    if(pickedFile !=null)
+    {
+      coverImage =File(pickedFile.path);
+      emit(SocialCoverImagePickedSuccessState());
+    }else{
+      emit(SocialCoverImagePickedErrorState());
+    }
+  }
+
+
+  void removeProfileImage(){
+    profileImage =null;
+    emit(SocialRemoveProfileImageState());
+  }
+  void uploadProfileImage({
+    @required String name,
+    @required String phone,
+    @required String bio,
+})
+  {
+    emit(SocialUserUpdateLoadingState());
+    //emit(SocialUploadProfileImageLoadingState());
+    firebase_storage.FirebaseStorage.instance
+        .ref()
+        .child('users/${Uri.file(profileImage.path).pathSegments.last}')
+        .putFile(profileImage)
+        .then((value)
+        {
+          value.ref.getDownloadURL().then((value)
+          {
+          //  emit(SocialUploadProfileImageSuccessState());
+            print(value);
+            updateUser(
+                name: name,
+                phone: phone,
+                bio: bio,
+                profile: value
+            );
+            removeProfileImage();
+          }).catchError((error){
+            emit(SocialUploadProfileImageErrorState(error.toString()));
+          });
+        })
+        .catchError((error)
+        {
+          emit(SocialUploadProfileImageErrorState(error.toString()));
+        });
+  }
+
+
+  void removeCoverImage(){
+    coverImage =null;
+    emit(SocialRemoveCoverImageState());
+  }
+
+  void uploadCoverImage({
+    @required String name,
+    @required String phone,
+    @required String bio,
+  })
+  {
+    emit(SocialUserUpdateLoadingState());
+   // emit(SocialUploadCoverImageLoadingState());
+    firebase_storage.FirebaseStorage.instance
+        .ref()
+        .child('users/${Uri.file(coverImage.path).pathSegments.last}')
+        .putFile(coverImage)
+        .then((value)
+    {
+      value.ref.getDownloadURL().then((value)
+      {
+       // emit(SocialUploadCoverImageSuccessState());
+        print(value);
+        updateUser(
+            name: name,
+            phone: phone,
+            bio: bio,
+            cover: value
+        );
+        removeCoverImage();
+      }).catchError((error){
+        emit(SocialUploadCoverImageErrorState(error.toString()));
+      });
+    })
+        .catchError((error)
+    {
+      emit(SocialUploadCoverImageErrorState(error.toString()));
+    });
+  }
+
+
+  void updateUser({
+    @required String name,
+    @required String phone,
+    @required String bio,
+    String cover,
+    String profile,
+})
+  {
+    SocialUserModel model = SocialUserModel(
+      name: name,
+      phone: phone,
+      bio: bio,
+      cover: cover??userModel.cover,
+      image: profile??userModel.image,
+      uId: userModel.uId,
+      isEmailVerified: false,
+    );
+
+    FirebaseFirestore.instance
+        .collection('users')
+        .doc(userModel.uId)
+        .update(model.toMap())
+        .then((value)
+    {
+      getUserData();
+    })
+        .catchError((error)
+    {
+      emit(SocialUserUpdateErrorState(error));
+    });
+  }
+
+  File postImage;
+
+
+
+//----------------------------ForPosts---------------------------------//
+
+  Future<void> getPostImage() async
+  {
+    final pickedFile =await picker.getImage(
+        source: ImageSource.gallery
+    );
+
+    if(pickedFile !=null)
+    {
+      postImage =File(pickedFile.path);
+      emit(SocialPostImagePickedSuccessState());
+    }else{
+      emit(SocialPostImagePickedErrorState());
+    }
+  }
+
+
+  void removePostImage(){
+    postImage=null;
+    emit(SocialRemovePostImageState());
+  }
+  void uploadPostImage({
+    @required String dateTime,
+    @required String text,
+  })
+  {
+    emit(SocialCreatePostLoadingState());
+    firebase_storage.FirebaseStorage.instance
+        .ref()
+        .child('posts/${Uri.file(postImage.path).pathSegments.last}')
+        .putFile(postImage)
+        .then((value)
+    {
+      value.ref.getDownloadURL().then((value)
+      {
+            createPost(
+                dateTime: dateTime,
+                text: text,
+                postImage: value,
+            );
+      }).catchError((error){
+        emit(SocialCreatePostErrorState(error.toString()));
+      });
+    })
+        .catchError((error)
+    {
+      emit(SocialCreatePostErrorState(error.toString()));
+    });
+  }
+
+  void createPost({
+    @required String dateTime,
+    @required String text,
+    String postImage,
+  })
+  {
+    emit(SocialCreatePostLoadingState());
+
+    PostModel model = PostModel(
+      name:  userModel.name,
+      image: userModel.image,
+      uId: userModel.uId,
+      text: text,
+      dateTime: dateTime,
+      postImage: postImage??'',
+    );
+
+    FirebaseFirestore.instance
+        .collection('posts')
+        .add(model.toMap())
+        .then((value)
+    {
+      FirebaseFirestore.instance.collection('posts').doc(value.id).update(
+          {
+            'postId':value.id
+          }).then((value){
+        emit(SocialAddIdPostSuccessState());
+      }).catchError((error){
+        emit(SocialAddIdPostErrorState(error.toString()));
+      });
+      emit(SocialCreatePostSuccessState());
+    })
+        .catchError((error)
+    {
+      emit(SocialCreatePostErrorState(error));
+    });
+  }
+
+  List<String> postsId=[];
+  List<int> likes=[];
+  List<int> comments=[];
+
+
+  List<PostModel> posts =[];
+  void getPosts()
+  {
+    FirebaseFirestore.instance.collection('posts').get().then((value) {
+      value.docs.forEach((element) {
+        element.reference.collection('likes').get().then((value) {
+          likes.add(value.docs.length);
+          postsId.add(element.id);
+          posts.add(PostModel.fromJson(element.data()));
+        }).catchError((error) {});
+      });
+
+      emit(SocialGetPostsSuccessState());
+    }).catchError((error) {
+      print(error.toString());
+      emit(SocialGetPostsErrorState(error.toString()));
+    });
+  }
+
+//----------------------------ForLikes---------------------------------//
+
+  void likePost({
+  @required String postId
+}){
+    FirebaseFirestore.instance
+        .collection('posts')
+        .doc(postId)
+        .collection('likes')
+        .doc(userModel.uId)
+        .set({
+      'like':true,
+        })
+        .then((value)
+    {
+      emit(SocialLikePostSuccessState());
+    })
+        .catchError((error)
+    {
+      emit(SocialLikePostErrorState(error.toString()));
+    });
+  }
+
+//---------------------------ForComments---------------------------------//
+
+  void createComment({
+    @required String postId,
+    @required String comment,
+    @required String dateTime,
+  }){
+
+    CommentModel commentModel =CommentModel(
+      dateTime: dateTime,
+      comment: comment,
+      uId: userModel.uId,
+      name: userModel.name,
+      image: userModel.image
+    );
+    FirebaseFirestore.instance
+        .collection('posts')
+        .doc(postId)
+        .collection('comments')
+        .doc(userModel.uId)
+        .set(commentModel.toMap())
+        .then((value)
+    {
+      emit(SocialCommentPostSuccessState());
+    })
+        .catchError((error)
+    {
+      emit(SocialCommentPostErrorState(error.toString()));
+    });
+  }
+
+
+   List<CommentModel> commentData =[];
+  void getComments({@required postId})
+  {
+    emit(SocialGetCommentLoadingState());
+    FirebaseFirestore.instance
+        .collection('posts')
+        .doc(postId)
+        .collection('comments')
+        .orderBy('dateTime')
+        .snapshots()
+        .listen((event) {
+      event.docs.forEach((element) {
+        commentData.add(CommentModel.fromJson(element.data()));
+      });
+      emit(SocialGetCommentSuccessState());
+    }).onError((error){
+       emit(SocialGetCommentErrorState(error.toString()));
+    });
+
+  }
+  String internet;
+ void checkConnection(){
+   emit(CheckInternetConnectionLoadingState());
+   InternetConnectionChecker().hasConnection.then((value){
+       internet =value ?'Internet' :'No internet';
+       print(internet);
+       emit(CheckInternetConnectionNoneState());
+    });
+  }
+
+}
+//---------------------------Check The Internet---------------------------------//
+
+
+//
+// void getPosts()
+// {
+//   emit(SocialGetPostsLoadingState());
+//   FirebaseFirestore.instance
+//       .collection('posts')
+//       .get()
+//       .then((value) {
+//     value.docs.forEach((element)
+//     {
+//       element.reference
+//           .collection('likes')
+//           .get()
+//           .then((value)
+//       {
+//         likes.add(value.docs.length);
+//         postsId.add(element.id);
+//         posts.add(PostModel.fromJson(element.data()));
+//       })
+//           .catchError((error){});
+//       element.reference
+//           .collection('comments')
+//           .get()
+//           .then((value){
+//         comments.add(value.docs.length);
+//       });
+//     });
+//
+//     emit(SocialGetPostsSuccessState());
+//   })
+//       .catchError((error){
+//     emit(SocialGetPostsErrorState(error.toString()));
+//   });
+// }
+
